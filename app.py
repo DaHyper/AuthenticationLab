@@ -62,7 +62,7 @@ google = oauth.register(
     name='google',
     client_id=os.getenv("GOOGLE_CLIENT_ID"),
     client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
-    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration'
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
     client_kwargs={
         'scope': 'openid email profile'
     }
@@ -207,7 +207,7 @@ def login_google():
 @app.route("/auth/google/callback")
 def google_callback():
     token = google.authorize_access_token()
-    user_info = google.get("userinfo").json()
+    user_info = google.parse_id_token(token)
 
     email = user_info["email"]
     name = user_info.get("name", email.split("@")[0])
