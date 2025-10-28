@@ -207,7 +207,7 @@ def login_google():
 @app.route("/auth/google/callback")
 def google_callback():
     token = google.authorize_access_token()
-    user_info = google.parse_id_token(token)
+    user_info = google.userinfo().json()
 
     email = user_info["email"]
     name = user_info.get("name", email.split("@")[0])
