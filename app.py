@@ -207,10 +207,10 @@ def login_google():
 @app.route("/auth/google/callback")
 def google_callback():
     token = google.authorize_access_token()
-    user_info = google.userinfo().json()
+    user_info = google.userinfo()
 
-    email = user_info["email"]
-    name = user_info.get("name", email.split("@")[0])
+    email = user_info.get("email")
+    name = user_info.get("name", email.split("@")[0] if email else "Unknown")
 
     # Try to find existing user
     user = User.query.filter_by(username=email).first()
@@ -222,7 +222,6 @@ def google_callback():
     login_user(user)
     flash("Logged in with Google!", "success")
     return redirect(url_for("dashboard"))
-
 
 @app.route("/logout")
 def logout():
