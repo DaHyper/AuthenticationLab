@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="text-center">
+    <h2>Enable MFA for {{ username }}</h2>
+    <p>Scan this QR code in your authenticator app:</p>
+    <img src="{{ url_for('qrcode_image') }}" alt="QR Code" class="border rounded" style="max-width:200px;">
+    <p class="mt-3"><strong>Secret:</strong> {{ secret }}</p>
+    <p class="text-muted">You can use Google Authenticator, Authy, or 1Password.</p>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-primary mt-3">Back to Dashboard</a>
+</div>
+{% endblock %}

@@ -117,7 +117,6 @@ def settings():
     return render_template("settings.html", username=session["user"], mfa_enabled=mfa_enabled)
 
 
-
 @app.route("/enable_mfa")
 def enable_mfa():
     if "user" not in session:
