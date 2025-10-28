@@ -1,11 +1,28 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
 from flask_session import Session
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+from dotenv import load_dotenv
+from authlib.integrations.flask_client import OAuth
 import sqlite3
 import os
 import pyotp
 import qrcode
 import io
+
+# Load environment variables
+load_dotenv()
+
+# Flask setup
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'devkey')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -40,6 +57,16 @@ def get_user(username):
     conn.close()
     return user
 
+oauth = OAuth(app)
+google = oauth.register(
+    name='google',
+    client_id=os.getenv("GOOGLE_CLIENT_ID"),
+    client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+    access_token_url='https://accounts.google.com/o/oauth2/token',
+    authorize_url='https://accounts.google.com/o/oauth2/auth',
+    api_base_url='https://www.googleapis.com/oauth2/v1/',
+    client_kwargs={'scope': 'openid email profile'},
+)
 
 # --- Routes ---
 @app.route("/")
@@ -171,6 +198,30 @@ def qrcode_image():
     img.save(buf)
     buf.seek(0)
     return send_file(buf, mimetype="image/png")
+
+@app.route("/login/google")
+def login_google():
+    redirect_uri = url_for("google_callback", _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route("/auth/google/callback")
+def google_callback():
+    token = google.authorize_access_token()
+    user_info = google.get("userinfo").json()
+
+    email = user_info["email"]
+    name = user_info.get("name", email.split("@")[0])
+
+    # Try to find existing user
+    user = User.query.filter_by(username=email).first()
+    if not user:
+        user = User(username=email, password_hash="GOOGLE_OAUTH", mfa_enabled=False)
+        db.session.add(user)
+        db.session.commit()
+
+    login_user(user)
+    flash("Logged in with Google!", "success")
+    return redirect(url_for("dashboard"))
 
 
 @app.route("/logout")
