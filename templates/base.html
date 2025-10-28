@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>{{ title or "Multi-Auth Demo" }}</title>
+    <title>{{ title or "AuthLab Demo" }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link 
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" 
@@ -11,7 +11,7 @@
 <body class="bg-light">
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container">
-            <a class="navbar-brand" href="/">MultiAuth Demo</a>
+            <a class="navbar-brand" href="/">Authlab Demo</a>
             <div>
                 {% if session.get('user') %}
                     <a href="{{ url_for('dashboard') }}" class="btn btn-outline-light btn-sm">Dashboard</a>

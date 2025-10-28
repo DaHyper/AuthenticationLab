@@ -136,7 +136,7 @@ def enable_mfa():
     else:
         secret = user[3]
 
-    otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=username, issuer_name="MultiAuth Demo")
+    otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=username, issuer_name="AuthLab Demo")
     return render_template("enable_mfa.html", username=username, secret=secret, otp_uri=otp_uri)
 
 @app.route("/disable_mfa", methods=["POST"])
@@ -165,7 +165,7 @@ def qrcode_image():
         flash("No MFA secret found.", "danger")
         return redirect(url_for("settings"))
 
-    otp_uri = pyotp.totp.TOTP(user[3]).provisioning_uri(name=username, issuer_name="MultiAuth Demo")
+    otp_uri = pyotp.totp.TOTP(user[3]).provisioning_uri(name=username, issuer_name="AuthLab Demo")
     img = qrcode.make(otp_uri)
     buf = io.BytesIO()
     img.save(buf)
