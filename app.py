@@ -82,9 +82,52 @@ google = oauth.register(
     client_id=os.getenv("GOOGLE_CLIENT_ID"),
     client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
     server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-    client_kwargs={
-        'scope': 'openid email profile'
-    }
+    client_kwargs={'scope': 'openid email profile'},
+)
+github = oauth.register(
+    name='github',
+    client_id=os.getenv("GITHUB_CLIENT_ID"),
+    client_secret=os.getenv("GITHUB_CLIENT_SECRET"),
+    access_token_url='https://github.com/login/oauth/access_token',
+    authorize_url='https://github.com/login/oauth/authorize',
+    api_base_url='https://api.github.com/',
+    client_kwargs={'scope': 'user:email'},
+)
+microsoft = oauth.register(
+    name='microsoft',
+    client_id=os.getenv("MICROSOFT_CLIENT_ID"),
+    client_secret=os.getenv("MICROSOFT_CLIENT_SECRET"),
+    authorize_url='https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+    access_token_url='https://login.microsoftonline.com/common/oauth2/v2.0/token',
+    api_base_url='https://graph.microsoft.com/v1.0/',
+    client_kwargs={'scope': 'User.Read openid email profile'},
+)
+discord = oauth.register(
+    name='discord',
+    client_id=os.getenv("DISCORD_CLIENT_ID"),
+    client_secret=os.getenv("DISCORD_CLIENT_SECRET"),
+    access_token_url='https://discord.com/api/oauth2/token',
+    authorize_url='https://discord.com/api/oauth2/authorize',
+    api_base_url='https://discord.com/api/',
+    client_kwargs={'scope': 'identify email'},
+)
+apple = oauth.register(
+    name='apple',
+    client_id=os.getenv("APPLE_CLIENT_ID"),
+    client_secret=os.getenv("APPLE_CLIENT_SECRET"),
+    access_token_url='https://appleid.apple.com/auth/token',
+    authorize_url='https://appleid.apple.com/auth/authorize',
+    api_base_url='https://appleid.apple.com',
+    client_kwargs={'scope': 'name email', 'response_mode': 'form_post'},
+)
+facebook = oauth.register(
+    name='facebook',
+    client_id=os.getenv("FACEBOOK_CLIENT_ID"),
+    client_secret=os.getenv("FACEBOOK_CLIENT_SECRET"),
+    access_token_url='https://graph.facebook.com/oauth/access_token',
+    authorize_url='https://www.facebook.com/dialog/oauth',
+    api_base_url='https://graph.facebook.com/v18.0/',
+    client_kwargs={'scope': 'email public_profile'},
 )
 
 # --- Routes ---
@@ -241,6 +284,123 @@ def google_callback():
     login_user(user)
     session["user"] = email
     flash("Logged in with Google!", "success")
+    return redirect(url_for("dashboard"))
+
+@app.route("/login/github")
+def login_github():
+    redirect_uri = url_for("github_callback", _external=True, _scheme="https")
+    return github.authorize_redirect(redirect_uri)
+
+@app.route("/auth/github/callback")
+def github_callback():
+    token = github.authorize_access_token()
+    user_info = github.get("user").json()
+    email = user_info.get("email")
+
+    if not email:
+        emails = github.get("user/emails").json()
+        email = next((e["email"] for e in emails if e.get("primary")), None)
+
+    name = user_info.get("name", email.split("@")[0] if email else "GitHubUser")
+
+    user = User.query.filter_by(username=email).first()
+    if not user:
+        user = User(username=email, password_hash="GITHUB_OAUTH", mfa_enabled=False)
+        db.session.add(user)
+        db.session.commit()
+
+    login_user(user)
+    flash(f"Logged in with GitHub as {name}", "success")
+    return redirect(url_for("dashboard"))
+
+@app.route("/login/microsoft")
+def login_microsoft():
+    redirect_uri = url_for("microsoft_callback", _external=True, _scheme="https")
+    return microsoft.authorize_redirect(redirect_uri)
+
+@app.route("/auth/microsoft/callback")
+def microsoft_callback():
+    token = microsoft.authorize_access_token()
+    user_info = microsoft.get("me").json()
+    email = user_info.get("mail") or user_info.get("userPrincipalName")
+    name = user_info.get("displayName", email.split("@")[0] if email else "MicrosoftUser")
+
+    user = User.query.filter_by(username=email).first()
+    if not user:
+        user = User(username=email, password_hash="MICROSOFT_OAUTH", mfa_enabled=False)
+        db.session.add(user)
+        db.session.commit()
+
+    login_user(user)
+    flash(f"Logged in with Microsoft as {name}", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/login/discord")
+def login_discord():
+    redirect_uri = url_for("discord_callback", _external=True, _scheme="https")
+    return discord.authorize_redirect(redirect_uri)
+
+@app.route("/auth/discord/callback")
+def discord_callback():
+    token = discord.authorize_access_token()
+    user_info = discord.get("/users/@me").json()
+    email = user_info.get("email")
+    name = user_info.get("username", "DiscordUser")
+
+    user = User.query.filter_by(username=email).first()
+    if not user:
+        user = User(username=email or name, password_hash="DISCORD_OAUTH", mfa_enabled=False)
+        db.session.add(user)
+        db.session.commit()
+
+    login_user(user)
+    flash(f"Logged in with Discord as {name}", "success")
+    return redirect(url_for("dashboard"))
+
+@app.route("/login/apple")
+def login_apple():
+    redirect_uri = url_for("apple_callback", _external=True, _scheme="https")
+    return apple.authorize_redirect(redirect_uri)
+
+@app.route("/auth/apple/callback", methods=["GET", "POST"])
+def apple_callback():
+    token = apple.authorize_access_token()
+    # Apple returns limited info (usually just email)
+    user_info = token.get("userinfo") or {}
+    email = user_info.get("email", "unknown@apple.com")
+    name = user_info.get("name", email.split("@")[0])
+
+    user = User.query.filter_by(username=email).first()
+    if not user:
+        user = User(username=email, password_hash="APPLE_OAUTH", mfa_enabled=False)
+        db.session.add(user)
+        db.session.commit()
+
+    login_user(user)
+    flash(f"Logged in with Apple as {name}", "success")
+    return redirect(url_for("dashboard"))
+
+@app.route("/login/facebook")
+def login_facebook():
+    redirect_uri = url_for("facebook_callback", _external=True, _scheme="https")
+    return facebook.authorize_redirect(redirect_uri)
+
+@app.route("/auth/facebook/callback")
+def facebook_callback():
+    token = facebook.authorize_access_token()
+    user_info = facebook.get("me?fields=id,name,email").json()
+    email = user_info.get("email")
+    name = user_info.get("name", email.split("@")[0] if email else "FacebookUser")
+
+    user = User.query.filter_by(username=email).first()
+    if not user:
+        user = User(username=email, password_hash="FACEBOOK_OAUTH", mfa_enabled=False)
+        db.session.add(user)
+        db.session.commit()
+
+    login_user(user)
+    flash(f"Logged in with Facebook as {name}", "success")
     return redirect(url_for("dashboard"))
 
 @app.route("/logout")
