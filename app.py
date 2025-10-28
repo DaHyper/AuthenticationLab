@@ -112,7 +112,10 @@ def dashboard():
 def settings():
     if "user" not in session:
         return redirect(url_for("login"))
-    return render_template("settings.html", username=session["user"])
+    user = get_user(session["user"])
+    mfa_enabled = bool(user[3])
+    return render_template("settings.html", username=session["user"], mfa_enabled=mfa_enabled)
+
 
 
 @app.route("/enable_mfa")
@@ -136,6 +139,20 @@ def enable_mfa():
 
     otp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=username, issuer_name="MultiAuth Demo")
     return render_template("enable_mfa.html", username=username, secret=secret, otp_uri=otp_uri)
+
+@app.route("/disable_mfa", methods=["POST"])
+def disable_mfa():
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    username = session["user"]
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET mfa_secret=NULL WHERE username=?", (username,))
+    conn.commit()
+    conn.close()
+    flash("MFA disabled successfully.", "info")
+    return redirect(url_for("settings"))
 
 
 @app.route("/qrcode")

@@ -1,11 +1,25 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Settings</title>
-</head>
-<body>
-    <h2>Settings for {{ username }}</h2>
-    <p>(MFA and password management can be added here)</p>
-    <a href="/dashboard">Back to Dashboard</a>
-</body>
-</html>
+{% extends "base.html" %}
+{% block content %}
+<div class="card mx-auto shadow-sm" style="max-width: 500px;">
+  <div class="card-body text-center">
+    <h3 class="card-title mb-3">Security Settings</h3>
+    <p class="text-muted">Manage your multi-factor authentication (MFA) options below.</p>
+
+    {% if mfa_enabled %}
+      <div class="alert alert-success">✅ MFA is currently <strong>enabled</strong>.</div>
+      <p>To disable MFA, click below:</p>
+      <form action="{{ url_for('disable_mfa') }}" method="POST">
+        <button type="submit" class="btn btn-danger w-100">Disable MFA</button>
+      </form>
+    {% else %}
+      <div class="alert alert-warning">⚠️ MFA is currently <strong>disabled</strong>.</div>
+      <p>We recommend enabling MFA for additional account protection.</p>
+      <a href="{{ url_for('enable_mfa') }}" class="btn btn-primary w-100">Enable MFA</a>
+    {% endif %}
+
+    <hr class="my-4">
+
+    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary w-100">Back to Dashboard</a>
+  </div>
+</div>
+{% endblock %}
