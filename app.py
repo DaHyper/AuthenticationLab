@@ -201,7 +201,7 @@ def qrcode_image():
 
 @app.route("/login/google")
 def login_google():
-    redirect_uri = url_for("google_callback", _external=True)
+    redirect_uri = url_for("google_callback", _external=True, _scheme="https")
     return google.authorize_redirect(redirect_uri)
 
 @app.route("/auth/google/callback")
