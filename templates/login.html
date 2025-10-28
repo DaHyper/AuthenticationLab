@@ -6,12 +6,18 @@
         <form method="POST">
             <div class="mb-3">
                 <label for="username" class="form-label">Username</label>
-                <input name="username" id="username" class="form-control" required>
+                <input name="username" id="username" value="{{ username or '' }}" class="form-control" required>
             </div>
             <div class="mb-3">
                 <label for="password" class="form-label">Password</label>
                 <input type="password" name="password" id="password" class="form-control" required>
             </div>
+            {% if require_mfa %}
+            <div class="mb-3">
+                <label for="code" class="form-label">MFA Code</label>
+                <input name="code" id="code" class="form-control" placeholder="123456" required>
+            </div>
+            {% endif %}    
             <button type="submit" class="btn btn-primary w-100">Login</button>
         </form>
         <p class="text-center mt-3">Don't have an account?
@@ -20,3 +26,7 @@
     </div>
 </div>
 {% endblock %}
+
+      }
+
+
