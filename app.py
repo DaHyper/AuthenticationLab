@@ -239,6 +239,7 @@ def google_callback():
         db.session.commit()
 
     login_user(user)
+    session["user"] = email
     flash("Logged in with Google!", "success")
     return redirect(url_for("dashboard"))
 
