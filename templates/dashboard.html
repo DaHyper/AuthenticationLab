@@ -1,13 +1,11 @@
-0~<!DOCTYPE html>
-<html>
-<head>
-    <title>Dashboard</title>
-</head>
-<body>
-    <h2>Welcome, {{ username }}</h2>
-    <p>You are logged in!</p>
-    <img src="/static/meme.jpg" alt="Meme" style="max-width:300px;"><br>
-    <a href="/logout">Logout</a>
-</body>
-</html>
-
+{% extends "base.html" %}
+{% block content %}
+<div class="text-center">
+    <h2>Welcome, {{ username }} 🎉</h2>
+    <p class="text-muted">You have successfully logged in.</p>
+    <img src="{{ url_for('static', filename='meme.jpg') }}" alt="Meme" class="img-fluid rounded shadow mt-4" style="max-width: 500px;">
+    <div class="mt-4">
+        <a href="{{ url_for('logout') }}" class="btn btn-danger">Logout</a>
+    </div>
+</div>
+{% endblock %}
