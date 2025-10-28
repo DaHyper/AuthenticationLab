@@ -2,7 +2,9 @@ Authlib==1.6.5
 bcrypt==5.0.0
 blinker==1.9.0
 cachelib==0.13.0
+certifi==2025.10.5
 cffi==2.0.0
+charset-normalizer==3.4.4
 click==8.3.0
 cryptography==46.0.3
 Flask==3.1.2
@@ -10,6 +12,7 @@ Flask-Login==0.6.3
 Flask-Session==0.8.0
 Flask-SQLAlchemy==3.1.1
 greenlet==3.2.4
+idna==3.11
 itsdangerous==2.2.0
 Jinja2==3.1.6
 MarkupSafe==3.0.3
@@ -19,6 +22,8 @@ pycparser==2.23
 pyotp==2.9.0
 python-dotenv==1.2.1
 qrcode==8.2
+requests==2.32.5
 SQLAlchemy==2.0.44
 typing_extensions==4.15.0
+urllib3==2.5.0
 Werkzeug==3.1.3
