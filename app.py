@@ -433,6 +433,20 @@ def facebook_callback():
     flash(f"Logged in with Facebook as {name}", "success")
     return redirect(url_for("dashboard"))
 
+@app.route("/webauthn/login/begin", methods=["POST"])
+def webauthn_login_begin():
+    email = request.json.get("email")
+    if not email:
+        return jsonify({"error": "Missing email"}), 400
+
+    user_cred = user_credentials.get(email)
+    options = generate_authentication_options(
+        allow_credentials=[user_cred] if user_cred else []
+    )
+    session["authentication_options"] = options.model_dump()
+    session["webauthn_email"] = email
+    return jsonify(options_to_json(options))
+
 @app.route("/webauthn/login/complete", methods=["POST"])
 def webauthn_login_complete():
     data = request.json
@@ -440,14 +454,24 @@ def webauthn_login_complete():
         verification = verify_authentication_response(
             credential=data,
             expected_challenge=session["authentication_options"]["challenge"],
-            expected_rp_id="authenticationlab.dahyper.org",
-            expected_origin="https://authenticationlab.dahyper.org",
+            expected_rp_id=RP_ID,
+            expected_origin=ORIGIN,
         )
-        session["user"] = verification.credential_id
-        return jsonify({"status": "ok"})
+
+        email = session.get("webauthn_email")
+        if not email:
+            return jsonify({"status": "failed", "reason": "No email in session"}), 400
+
+        user = User.query.filter_by(username=email).first()
+        if user:
+            login_user(user)
+            session["user"] = email
+            return jsonify({"status": "ok"})
+        else:
+            return jsonify({"status": "failed", "reason": "User not found"}), 404
+
     except Exception as e:
         return jsonify({"status": "failed", "reason": str(e)}), 400
-
 
 @app.route("/webauthn/register/begin", methods=["POST"])
 def webauthn_register_begin():
@@ -458,11 +482,11 @@ def webauthn_register_begin():
     options = generate_registration_options(
         rp_name=RP_NAME,
         user_id=email.encode("utf-8"),
-        user_name=email,
+        user_name=email
     )
     session["registration_options"] = options.model_dump()
+    session["webauthn_email"] = email
     return jsonify(options_to_json(options))
-
 
 @app.route("/webauthn/register/complete", methods=["POST"])
 def webauthn_register_complete():
@@ -472,14 +496,14 @@ def webauthn_register_complete():
             credential=data,
             expected_challenge=session["registration_options"]["challenge"],
             expected_origin=ORIGIN,
-            expected_rp_id=RP_ID,
+            expected_rp_id=RP_ID
         )
-        email = verification.credential.user_handle.decode()
+
+        email = session.get("webauthn_email")
         user_credentials[email] = verification.credential
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "failed", "reason": str(e)}), 400
-
 
 @app.route("/logout")
 def logout():
