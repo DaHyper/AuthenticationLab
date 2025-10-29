@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from authlib.integrations.flask_client import OAuth
 import sqlite3
 import os
-import pyotpx
+import pyotp
 import qrcode
 import io
 from webauthn import generate_registration_options, generate_authentication_options, options_to_json, verify_registration_response, verify_authentication_response
