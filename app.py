@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify
 from flask_session import Session
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -7,9 +7,11 @@ from dotenv import load_dotenv
 from authlib.integrations.flask_client import OAuth
 import sqlite3
 import os
-import pyotp
+import pyotpx
 import qrcode
 import io
+from webauthn import generate_registration_options, generate_authentication_options, options_to_json, verify_registration_response, verify_authentication_response
+import requests
 
 # Load environment variables
 load_dotenv()
@@ -26,6 +28,11 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 Session(app)
 
+RP_ID = "authenticationlab.dahyper.org"  # your domain
+RP_NAME = "AuthenticationLab"
+ORIGIN = "https://authenticationlab.dahyper.org"
+
+user_credentials = {}
 DB_FILE = "users.db"
 
 # --- Database setup ---
@@ -425,6 +432,85 @@ def facebook_callback():
     login_user(user)
     flash(f"Logged in with Facebook as {name}", "success")
     return redirect(url_for("dashboard"))
+
+@app.route("/webauthn/login/complete", methods=["POST"])
+def webauthn_login_complete():
+    data = request.json
+    try:
+        verification = verify_authentication_response(
+            credential=data,
+            expected_challenge=session["authentication_options"]["challenge"],
+            expected_rp_id="authenticationlab.dahyper.org",
+            expected_origin="https://authenticationlab.dahyper.org",
+        )
+        session["user"] = verification.credential_id
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "failed", "reason": str(e)}), 400
+
+
+@app.route("/webauthn/register/begin", methods=["POST"])
+def webauthn_register_begin():
+    email = request.json.get("email")
+    if not email:
+        return jsonify({"error": "Missing email"}), 400
+
+    options = generate_registration_options(
+        rp_name=RP_NAME,
+        user_id=email.encode("utf-8"),
+        user_name=email,
+    )
+    session["registration_options"] = options.model_dump()
+    return jsonify(options_to_json(options))
+
+
+@app.route("/webauthn/register/complete", methods=["POST"])
+def webauthn_register_complete():
+    data = request.json
+    try:
+        verification = verify_registration_response(
+            credential=data,
+            expected_challenge=session["registration_options"]["challenge"],
+            expected_origin=ORIGIN,
+            expected_rp_id=RP_ID,
+        )
+        email = verification.credential.user_handle.decode()
+        user_credentials[email] = verification.credential
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "failed", "reason": str(e)}), 400
+
+
+@app.route("/webauthn/login/begin", methods=["POST"])
+def webauthn_login_begin():
+    email = request.json.get("email")
+    options = generate_authentication_options()
+    session["authentication_options"] = options.model_dump()
+    return jsonify(options_to_json(options))
+
+
+@app.route("/webauthn/login/complete", methods=["POST"])
+def webauthn_login_complete():
+    data = request.json
+    try:
+        verification = verify_authentication_response(
+            credential=data,
+            expected_challenge=session["authentication_options"]["challenge"],
+            expected_origin=ORIGIN,
+            expected_rp_id=RP_ID,
+        )
+        # You can now log the user in
+        email = verification.credential.user_handle.decode()
+        user = User.query.filter_by(username=email).first()
+        if user:
+            login_user(user)
+            return jsonify({"status": "ok"})
+        else:
+            flash("No account linked to this passkey.", "danger")
+            return jsonify({"status": "failed"}), 401
+    except Exception as e:
+        return jsonify({"status": "failed", "reason": str(e)}), 400
+
 
 @app.route("/logout")
 def logout():

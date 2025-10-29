@@ -51,7 +51,43 @@
       <a href="{{ url_for('login_facebook') }}" class="btn btn-primary w-100" style="background-color:#1877F2;">
         <i class="bi bi-facebook"></i> Facebook
       </a>
+
+      <button class="btn btn-secondary w-100" onclick="startPasskeyLogin()">
+      <i class="bi bi-key"></i> Use Passkey
+      </button>
     </div>
   </div>
-</div>
+<script>
+async function startPasskeyLogin() {
+  const email = prompt("Enter your email to use a passkey:");
+  if (!email) return;
+
+  try {
+    const startRes = await fetch("/webauthn/login/begin", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ email })
+    });
+    const options = await startRes.json();
+    options.publicKey.challenge = Uint8Array.from(atob(options.publicKey.challenge), c => c.charCodeAt(0));
+
+    const credential = await navigator.credentials.get(options);
+
+    const completeRes = await fetch("/webauthn/login/complete", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(credential)
+    });
+    const result = await completeRes.json();
+
+    if (result.status === "ok") {
+      window.location.href = "/dashboard";
+    } else {
+      alert("Passkey login failed: " + (result.reason || "Unknown error"));
+    }
+  } catch (err) {
+    alert("WebAuthn error: " + err.message);
+  }
+}
+</script>
 {% endblock %}
