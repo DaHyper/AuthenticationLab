@@ -191,10 +191,9 @@ def login():
 
 
 @app.route("/dashboard")
+@login_required
 def dashboard():
-    if "user" not in session:
-        return redirect(url_for("login"))
-    return render_template("dashboard.html", username=session["user"])
+    return render_template("dashboard.html", username=current_user.username)
 
 
 @app.route("/settings")
@@ -343,20 +342,40 @@ def login_discord():
 
 @app.route("/auth/discord/callback")
 def discord_callback():
-    token = discord.authorize_access_token()
-    user_info = discord.get("/users/@me").json()
-    email = user_info.get("email")
-    name = user_info.get("username", "DiscordUser")
+    try:
+        token = discord.authorize_access_token()
+        if not token:
+            flash("Discord authorization failed (no token).", "danger")
+            return redirect(url_for("login"))
 
-    user = User.query.filter_by(username=email).first()
-    if not user:
-        user = User(username=email or name, password_hash="DISCORD_OAUTH", mfa_enabled=False)
-        db.session.add(user)
-        db.session.commit()
+        resp = discord.get("users/@me")
+        if resp.status_code != 200:
+            flash(f"Discord API error: {resp.status_code}", "danger")
+            return redirect(url_for("login"))
 
-    login_user(user)
-    flash(f"Logged in with Discord as {name}", "success")
-    return redirect(url_for("dashboard"))
+        try:
+            user_info = resp.json()
+        except Exception:
+            flash("Failed to parse Discord user data.", "danger")
+            return redirect(url_for("login"))
+
+        email = user_info.get("email", f"{user_info['id']}@discord")
+        name = user_info.get("username", "DiscordUser")
+
+        # Create/find user
+        user = User.query.filter_by(username=email).first()
+        if not user:
+            user = User(username=email, password_hash="DISCORD_OAUTH", mfa_enabled=False)
+            db.session.add(user)
+            db.session.commit()
+
+        login_user(user)
+        flash(f"Logged in with Discord as {name}", "success")
+        return redirect(url_for("dashboard"))
+
+    except Exception as e:
+        flash(f"Discord login failed: {e}", "danger")
+        return redirect(url_for("login"))
 
 @app.route("/login/apple")
 def login_apple():
