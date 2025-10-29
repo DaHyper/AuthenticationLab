@@ -481,37 +481,6 @@ def webauthn_register_complete():
         return jsonify({"status": "failed", "reason": str(e)}), 400
 
 
-@app.route("/webauthn/login/begin", methods=["POST"])
-def webauthn_login_begin():
-    email = request.json.get("email")
-    options = generate_authentication_options()
-    session["authentication_options"] = options.model_dump()
-    return jsonify(options_to_json(options))
-
-
-@app.route("/webauthn/login/complete", methods=["POST"])
-def webauthn_login_complete():
-    data = request.json
-    try:
-        verification = verify_authentication_response(
-            credential=data,
-            expected_challenge=session["authentication_options"]["challenge"],
-            expected_origin=ORIGIN,
-            expected_rp_id=RP_ID,
-        )
-        # You can now log the user in
-        email = verification.credential.user_handle.decode()
-        user = User.query.filter_by(username=email).first()
-        if user:
-            login_user(user)
-            return jsonify({"status": "ok"})
-        else:
-            flash("No account linked to this passkey.", "danger")
-            return jsonify({"status": "failed"}), 401
-    except Exception as e:
-        return jsonify({"status": "failed", "reason": str(e)}), 400
-
-
 @app.route("/logout")
 def logout():
     session.clear()
