@@ -348,21 +348,24 @@ def discord_callback():
             flash("Discord authorization failed (no token).", "danger")
             return redirect(url_for("login"))
 
-        resp = discord.get("users/@me")
+        print("DISCORD TOKEN:", token)
+
+        headers = {"Authorization": f"Bearer {token['access_token']}"}
+        resp = requests.get("https://discord.com/api/users/@me", headers=headers)
+
+        # --- DEBUG: show response details ---
+        print("DISCORD RESPONSE STATUS:", resp.status_code)
+        print("DISCORD RESPONSE TEXT:", resp.text[:500])  # first 500 chars
+
         if resp.status_code != 200:
             flash(f"Discord API error: {resp.status_code}", "danger")
             return redirect(url_for("login"))
 
-        try:
-            user_info = resp.json()
-        except Exception:
-            flash("Failed to parse Discord user data.", "danger")
-            return redirect(url_for("login"))
+        user_info = resp.json()
 
         email = user_info.get("email", f"{user_info['id']}@discord")
         name = user_info.get("username", "DiscordUser")
 
-        # Create/find user
         user = User.query.filter_by(username=email).first()
         if not user:
             user = User(username=email, password_hash="DISCORD_OAUTH", mfa_enabled=False)
@@ -374,6 +377,7 @@ def discord_callback():
         return redirect(url_for("dashboard"))
 
     except Exception as e:
+        print("DISCORD CALLBACK ERROR:", e)
         flash(f"Discord login failed: {e}", "danger")
         return redirect(url_for("login"))
 
