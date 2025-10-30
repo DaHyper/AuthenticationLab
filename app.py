@@ -439,13 +439,34 @@ def webauthn_login_begin():
     if not email:
         return jsonify({"error": "Missing email"}), 400
 
-    user_cred = user_credentials.get(email)
-    options = generate_authentication_options(
-        allow_credentials=[user_cred] if user_cred else []
-    )
-    session["authentication_options"] = options.model_dump()
     session["webauthn_email"] = email
-    return jsonify(options_to_json(options))
+    options = generate_authentication_options(
+        rp_id=RP_ID,
+        user_verification="preferred"
+    )
+
+    # Store raw options for verification
+    session["authentication_options"] = {
+        "challenge": options.challenge,
+        "rp_id": options.rp_id,
+        "allow_credentials": [
+            {"type": cred.type, "id": cred.id}
+            for cred in options.allow_credentials
+        ] if options.allow_credentials else []
+    }
+
+    # Prepare JSON for browser (Base64-encoded)
+    publicKey = {
+        "challenge": b64encode(options.challenge).decode("utf-8"),
+        "rpId": options.rp_id,
+        "allowCredentials": [
+            {"type": cred["type"], "id": b64encode(cred["id"]).decode("utf-8")}
+            for cred in session["authentication_options"]["allow_credentials"]
+        ] if options.allow_credentials else [],
+        "userVerification": options.user_verification
+    }
+
+    return jsonify({"publicKey": publicKey})
 
 @app.route("/webauthn/login/complete", methods=["POST"])
 def webauthn_login_complete():
@@ -484,7 +505,7 @@ def webauthn_register_begin():
         user_id=email.encode("utf-8"),
         user_name=email
     )
-    session["registration_options"] = options.model_dump()
+    session["registration_options"] = options_to_json(options)
     session["webauthn_email"] = email
     return jsonify(options_to_json(options))
 
