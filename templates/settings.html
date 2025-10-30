@@ -19,7 +19,91 @@
 
     <hr class="my-4">
 
+    <h5 class="text-start">🔑 Passkeys (WebAuthn)</h5>
+    <p class="text-muted text-start">Use biometrics or security keys to sign in securely without passwords.</p>
+    
+    {% if passkey_count > 0 %}
+      <div class="alert alert-info">
+        You have <strong>{{ passkey_count }}</strong> passkey(s) registered.
+      </div>
+    {% else %}
+      <div class="alert alert-secondary">
+        No passkeys registered yet.
+      </div>
+    {% endif %}
+    
+    <button class="btn btn-success w-100 mb-3" onclick="registerPasskey()">
+      <i class="bi bi-plus-circle"></i> Add New Passkey
+    </button>
+    
+    <div id="passkey-status" class="mt-3"></div>
+
+    <hr class="my-4">
+
     <a href="{{ url_for('dashboard') }}" class="btn btn-secondary w-100">Back to Dashboard</a>
   </div>
 </div>
+<script>
+async function registerPasskey() {
+    try {
+        document.getElementById("passkey-status").innerHTML = 
+            '<div class="alert alert-info">Setting up passkey...</div>';
+        
+        // Step 1: Request registration options from server
+        const startRes = await fetch("/webauthn/register/begin", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ email: "{{ username }}" })
+        });
+        
+        if (!startRes.ok) {
+            throw new Error("Failed to start registration");
+        }
+        
+        const options = await startRes.json();
+        
+        // Step 2: Decode challenge and user ID
+        options.publicKey.challenge = Uint8Array.from(
+            atob(options.publicKey.challenge.replace(/_/g, "/").replace(/-/g, "+")),
+            c => c.charCodeAt(0)
+        );
+        
+        options.publicKey.user.id = Uint8Array.from(
+            atob(options.publicKey.user.id.replace(/_/g, "/").replace(/-/g, "+")),
+            c => c.charCodeAt(0)
+        );
+        
+        // Step 3: Create credential
+        const credential = await navigator.credentials.create(options);
+        
+        // Step 4: Send credential to server
+        const completeRes = await fetch("/webauthn/register/complete", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                id: credential.id,
+                rawId: btoa(String.fromCharCode(...new Uint8Array(credential.rawId))),
+                response: {
+                    clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(credential.response.clientDataJSON))),
+                    attestationObject: btoa(String.fromCharCode(...new Uint8Array(credential.response.attestationObject)))
+                },
+                type: credential.type
+            })
+        });
+        
+        const result = await completeRes.json();
+        
+        if (result.status === "ok") {
+            document.getElementById("passkey-status").innerHTML = 
+                '<div class="alert alert-success">✅ Passkey added successfully! Reloading page...</div>';
+            setTimeout(() => window.location.reload(), 1500);
+        } else {
+            throw new Error(result.reason || "Registration failed");
+        }
+    } catch (err) {
+        document.getElementById("passkey-status").innerHTML = 
+            '<div class="alert alert-danger">❌ Error: ' + err.message + '</div>';
+    }
+}
+</script>
 {% endblock %}

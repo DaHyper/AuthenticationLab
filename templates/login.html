@@ -59,17 +59,22 @@
   </div>
 <script>
 async function startPasskeyLogin() {
-  const email = prompt("Enter your email to use a passkey:");
-  if (!email) return;
+  const username = prompt("Enter your username to use a passkey:");
+  if (!username) return;
 
   try {
     // Step 1: request login options from the server
     const startRes = await fetch("/webauthn/login/begin", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ username })  // Changed from email to username
     });
     const options = await startRes.json();
+
+    if (options.error) {
+      alert(options.error);
+      return;
+    }
 
     // Step 2: decode challenge and allowCredentials IDs
     options.publicKey.challenge = Uint8Array.from(
@@ -90,11 +95,24 @@ async function startPasskeyLogin() {
     // Step 3: get credential from browser
     const credential = await navigator.credentials.get(options);
 
-    // Step 4: send credential to server for verification
+    // Step 4: encode the credential for JSON serialization
+    const credentialJSON = {
+      id: credential.id,
+      rawId: btoa(String.fromCharCode(...new Uint8Array(credential.rawId))),
+      type: credential.type,
+      response: {
+        clientDataJSON: btoa(String.fromCharCode(...new Uint8Array(credential.response.clientDataJSON))),
+        authenticatorData: btoa(String.fromCharCode(...new Uint8Array(credential.response.authenticatorData))),
+        signature: btoa(String.fromCharCode(...new Uint8Array(credential.response.signature))),
+        userHandle: credential.response.userHandle ? btoa(String.fromCharCode(...new Uint8Array(credential.response.userHandle))) : null
+      }
+    };
+
+    // Step 5: send credential to server for verification
     const completeRes = await fetch("/webauthn/login/complete", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(credential)
+      body: JSON.stringify(credentialJSON)
     });
     const result = await completeRes.json();
 

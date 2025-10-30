@@ -5,12 +5,14 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 from authlib.integrations.flask_client import OAuth
+from base64 import b64encode, b64decode
 import sqlite3
 import os
 import pyotp
 import qrcode
 import io
 from webauthn import generate_registration_options, generate_authentication_options, options_to_json, verify_registration_response, verify_authentication_response
+from webauthn.helpers.structs import PublicKeyCredentialDescriptor
 import requests
 
 # Load environment variables
@@ -52,6 +54,22 @@ def init_db():
 
 init_db()
 
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            mfa_secret TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
 # --- Helpers ---
 def get_user(username):
     conn = sqlite3.connect(DB_FILE)
@@ -74,6 +92,16 @@ class User(db.Model, UserMixin):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+class WebAuthnCredential(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    credential_id = db.Column(db.LargeBinary, nullable=False, unique=True)
+    public_key = db.Column(db.LargeBinary, nullable=False)
+    sign_count = db.Column(db.Integer, default=0)
+    name = db.Column(db.String(100), default="My Passkey")
+    
+    user = db.relationship('User', backref=db.backref('webauthn_credentials', lazy=True))
 
 # Create database tables
 with app.app_context():
@@ -150,19 +178,37 @@ def register():
     if request.method == "POST":
         username = request.form["username"]
         password = request.form["password"]
-        hashed_pw = generate_password_hash(password)
 
+        # Check if user already exists in SQLAlchemy
+        existing_user = User.query.filter_by(username=username).first()
+        if existing_user:
+            flash("Username already exists.", "danger")
+            return render_template("register.html")
+
+        # Create new user in SQLAlchemy
+        new_user = User(username=username)
+        new_user.set_password(password)
+        db.session.add(new_user)
+        db.session.commit()
+
+        # Also add to sqlite3 for backward compatibility
+        hashed_pw = generate_password_hash(password)
         conn = sqlite3.connect(DB_FILE)
         cur = conn.cursor()
         try:
             cur.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_pw))
             conn.commit()
-            flash("Registration successful! You can now log in.", "success")
-            return redirect(url_for("login"))
         except sqlite3.IntegrityError:
-            flash("Username already exists.", "danger")
+            pass
         finally:
             conn.close()
+
+        # Auto-login the user
+        login_user(new_user)
+        session["user"] = username
+        flash("Registration successful! You are now logged in.", "success")
+        return redirect(url_for("dashboard"))
+    
     return render_template("register.html")
 
 
@@ -173,9 +219,9 @@ def login():
         password = request.form["password"]
         code = request.form.get("code")  # optional MFA code
 
-        user = get_user(username)
-        if user and check_password_hash(user[2], password):
-            mfa_secret = user[3]
+        user_data = get_user(username)
+        if user_data and check_password_hash(user_data[2], password):
+            mfa_secret = user_data[3]
 
             # If user has MFA enabled, check code
             if mfa_secret:
@@ -188,10 +234,12 @@ def login():
                     flash("Invalid MFA code.", "danger")
                     return render_template("login.html", username=username, require_mfa=True)
 
-            # Success
-            session["user"] = username
-            flash("Login successful!", "success")
-            return redirect(url_for("dashboard"))
+            user = User.query.filter_by(username=username).first()
+            if user:
+                login_user(user)
+                session["user"] = username  # Keep for backward compatibility
+                flash("Login successful!", "success")
+                return redirect(url_for("dashboard"))
         else:
             flash("Invalid credentials.", "danger")
     return render_template("login.html")
@@ -202,15 +250,13 @@ def login():
 def dashboard():
     return render_template("dashboard.html", username=current_user.username)
 
-
 @app.route("/settings")
+@login_required
 def settings():
-    if "user" not in session:
-        return redirect(url_for("login"))
-    user = get_user(session["user"])
-    mfa_enabled = bool(user[3])
-    return render_template("settings.html", username=session["user"], mfa_enabled=mfa_enabled)
-
+    user = get_user(current_user.username)
+    mfa_enabled = bool(user[3]) if user else False
+    passkey_count = WebAuthnCredential.query.filter_by(user_id=current_user.id).count()
+    return render_template("settings.html", username=session["user"], mfa_enabled=mfa_enabled, passkey_count=passkey_count)
 
 @app.route("/enable_mfa")
 def enable_mfa():
@@ -433,37 +479,118 @@ def facebook_callback():
     flash(f"Logged in with Facebook as {name}", "success")
     return redirect(url_for("dashboard"))
 
+@app.route("/webauthn/register/begin", methods=["POST"])
+@login_required
+def webauthn_register_begin():
+    email = current_user.username
+    
+    # Get existing credentials to exclude them
+    existing_creds = WebAuthnCredential.query.filter_by(user_id=current_user.id).all()
+    exclude_credentials = [
+        PublicKeyCredentialDescriptor(id=cred.credential_id)
+        for cred in existing_creds
+    ]
+    
+    options = generate_registration_options(
+        rp_id=RP_ID,
+        rp_name=RP_NAME,
+        user_id=email.encode("utf-8"),
+        user_name=email,
+        exclude_credentials=exclude_credentials if exclude_credentials else None
+    )
+    
+    # Store challenge in session for verification
+    session["registration_challenge"] = b64encode(options.challenge).decode("utf-8")
+    
+    # Convert to JSON-serializable format
+    publicKey = {
+        "challenge": b64encode(options.challenge).decode("utf-8"),
+        "rp": {"name": options.rp.name, "id": options.rp.id},
+        "user": {
+            "id": b64encode(options.user.id).decode("utf-8"),
+            "name": options.user.name,
+            "displayName": options.user.display_name
+        },
+        "pubKeyCredParams": [{"type": p.type, "alg": p.alg} for p in options.pub_key_cred_params],
+        "timeout": options.timeout,
+        "attestation": options.attestation,
+        "authenticatorSelection": {
+            "userVerification": options.authenticator_selection.user_verification
+        } if options.authenticator_selection else {}
+    }
+    
+    return jsonify({"publicKey": publicKey})
+
+@app.route("/webauthn/register/complete", methods=["POST"])
+@login_required
+def webauthn_register_complete():
+    data = request.json
+    
+    try:
+        challenge = b64decode(session["registration_challenge"])
+
+        verification = verify_registration_response(
+            credential=data,
+            expected_challenge=challenge,
+            expected_origin=ORIGIN,
+            expected_rp_id=RP_ID
+        )
+        
+        # Store the credential in the database
+        new_credential = WebAuthnCredential(
+            user_id=current_user.id,
+            credential_id=verification.credential_id,
+            public_key=verification.credential_public_key,
+            sign_count=verification.sign_count
+        )
+        db.session.add(new_credential)
+        db.session.commit()
+        
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        print("Registration error:", e)
+        return jsonify({"status": "failed", "reason": str(e)}), 400
+
 @app.route("/webauthn/login/begin", methods=["POST"])
 def webauthn_login_begin():
-    email = request.json.get("email")
-    if not email:
-        return jsonify({"error": "Missing email"}), 400
+    username = request.json.get("username") or request.json.get("email")
+    if not username:
+        return jsonify({"error": "Missing username"}), 400
 
-    session["webauthn_email"] = email
+    # Find user and their credentials
+    user = User.query.filter_by(username=username).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    # Get all credentials for this user
+    credentials = WebAuthnCredential.query.filter_by(user_id=user.id).all()
+    
+    if not credentials:
+        return jsonify({"error": "No passkeys registered for this account"}), 404
+    
+    allow_credentials = [
+        PublicKeyCredentialDescriptor(id=cred.credential_id)
+        for cred in credentials
+    ]
+    
     options = generate_authentication_options(
         rp_id=RP_ID,
+        allow_credentials=allow_credentials,
         user_verification="preferred"
     )
 
-    # Store raw options for verification
-    session["authentication_options"] = {
-        "challenge": options.challenge,
-        "rp_id": options.rp_id,
-        "allow_credentials": [
-            {"type": cred.type, "id": cred.id}
-            for cred in options.allow_credentials
-        ] if options.allow_credentials else []
-    }
+    session["authentication_challenge"] = b64encode(options.challenge).decode("utf-8")
+    session["webauthn_username"] = username
 
-    # Prepare JSON for browser (Base64-encoded)
     publicKey = {
         "challenge": b64encode(options.challenge).decode("utf-8"),
         "rpId": options.rp_id,
         "allowCredentials": [
-            {"type": cred["type"], "id": b64encode(cred["id"]).decode("utf-8")}
-            for cred in session["authentication_options"]["allow_credentials"]
-        ] if options.allow_credentials else [],
-        "userVerification": options.user_verification
+            {"type": "public-key", "id": b64encode(cred.id).decode("utf-8")}
+            for cred in allow_credentials
+        ],
+        "userVerification": options.user_verification,
+        "timeout": options.timeout
     }
 
     return jsonify({"publicKey": publicKey})
@@ -471,67 +598,51 @@ def webauthn_login_begin():
 @app.route("/webauthn/login/complete", methods=["POST"])
 def webauthn_login_complete():
     data = request.json
+    
     try:
+        # Get challenge from session (stored as base64 string)
+        challenge = b64decode(session["authentication_challenge"])
+        
+        # Decode credential_id to find the credential
+        credential_id = b64decode(data["rawId"])
+        
+        # Find the credential
+        credential_record = WebAuthnCredential.query.filter_by(credential_id=credential_id).first()
+        if not credential_record:
+            return jsonify({"status": "failed", "reason": "Credential not found"}), 404
+        
+        # Pass the credential data directly
         verification = verify_authentication_response(
             credential=data,
-            expected_challenge=session["authentication_options"]["challenge"],
+            expected_challenge=challenge,
             expected_rp_id=RP_ID,
             expected_origin=ORIGIN,
+            credential_public_key=credential_record.public_key,
+            credential_current_sign_count=credential_record.sign_count
         )
-
-        email = session.get("webauthn_email")
-        if not email:
-            return jsonify({"status": "failed", "reason": "No email in session"}), 400
-
-        user = User.query.filter_by(username=email).first()
-        if user:
-            login_user(user)
-            session["user"] = email
-            return jsonify({"status": "ok"})
-        else:
-            return jsonify({"status": "failed", "reason": "User not found"}), 404
-
-    except Exception as e:
-        return jsonify({"status": "failed", "reason": str(e)}), 400
-
-@app.route("/webauthn/register/begin", methods=["POST"])
-def webauthn_register_begin():
-    email = request.json.get("email")
-    if not email:
-        return jsonify({"error": "Missing email"}), 400
-
-    options = generate_registration_options(
-        rp_name=RP_NAME,
-        user_id=email.encode("utf-8"),
-        user_name=email
-    )
-    session["registration_options"] = options_to_json(options)
-    session["webauthn_email"] = email
-    return jsonify(options_to_json(options))
-
-@app.route("/webauthn/register/complete", methods=["POST"])
-def webauthn_register_complete():
-    data = request.json
-    try:
-        verification = verify_registration_response(
-            credential=data,
-            expected_challenge=session["registration_options"]["challenge"],
-            expected_origin=ORIGIN,
-            expected_rp_id=RP_ID
-        )
-
-        email = session.get("webauthn_email")
-        user_credentials[email] = verification.credential
+        
+        # Update sign count
+        credential_record.sign_count = verification.new_sign_count
+        db.session.commit()
+        
+        # Log the user in
+        user = User.query.get(credential_record.user_id)
+        login_user(user)
+        session["user"] = user.username
+        
         return jsonify({"status": "ok"})
+        
     except Exception as e:
+        print("Authentication error:", e)
         return jsonify({"status": "failed", "reason": str(e)}), 400
 
 @app.route("/logout")
+@login_required
 def logout():
+    logout_user()
     session.clear()
-    flash("Logged out successfully.", "info")
+    flash("You have been logged out.", "info")
     return redirect(url_for("login"))
-
 
 if __name__ == "__main__":
     app.run(debug=True)
