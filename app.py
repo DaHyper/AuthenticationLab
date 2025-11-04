@@ -551,6 +551,29 @@ def webauthn_register_complete():
         print("Registration error:", e)
         return jsonify({"status": "failed", "reason": str(e)}), 400
 
+@app.route("/webauthn/login/begin-usernameless", methods=["POST"])
+def webauthn_login_begin_usernameless():
+    """Start passkey login without requiring username"""
+    try:
+        options = generate_authentication_options(
+            rp_id=RP_ID,
+            user_verification="preferred"
+        )
+
+        session["authentication_challenge"] = b64encode(options.challenge).decode("utf-8")
+
+        publicKey = {
+            "challenge": b64encode(options.challenge).decode("utf-8"),
+            "rpId": options.rp_id,
+            "userVerification": options.user_verification,
+            "timeout": options.timeout
+        }
+
+        return jsonify({"publicKey": publicKey})
+    except Exception as e:
+        print("Error starting usernameless login:", e)
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/webauthn/login/begin", methods=["POST"])
 def webauthn_login_begin():
     username = request.json.get("username") or request.json.get("email")
@@ -601,6 +624,9 @@ def webauthn_login_complete():
     
     try:
         # Get challenge from session (stored as base64 string)
+        if "authentication_challenge" not in session:
+            return jsonify({"status": "failed", "reason": "No authentication challenge found. Please try again."}), 400
+        
         challenge = b64decode(session["authentication_challenge"])
         
         # Decode credential_id to find the credential
@@ -634,7 +660,16 @@ def webauthn_login_complete():
         
     except Exception as e:
         print("Authentication error:", e)
-        return jsonify({"status": "failed", "reason": str(e)}), 400
+        error_message = str(e)
+    
+        if "not allowed" in error_message.lower() or "timeout" in error_message.lower():
+                error_message = "Passkey authentication was cancelled or timed out. Please try again."
+        elif "credential" in error_message.lower():
+                error_message = "This passkey is not registered with any account."
+        elif "challenge" in error_message.lower():
+                error_message = "Authentication session expired. Please try again."
+            
+        return jsonify({"status": "failed", "reason": error_message}), 400
 
 @app.route("/logout")
 @login_required
