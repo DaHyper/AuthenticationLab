@@ -14,6 +14,9 @@ import io
 from webauthn import generate_registration_options, generate_authentication_options, options_to_json, verify_registration_response, verify_authentication_response
 from webauthn.helpers.structs import PublicKeyCredentialDescriptor
 import requests
+import secrets
+from datetime import datetime, timedelta
+from user_agents import parse
 
 # Load environment variables
 load_dotenv()
@@ -100,8 +103,106 @@ class WebAuthnCredential(db.Model):
     public_key = db.Column(db.LargeBinary, nullable=False)
     sign_count = db.Column(db.Integer, default=0)
     name = db.Column(db.String(100), default="My Passkey")
+    created_at = db.Column(db.DateTime, default=db.func.now())
+    last_used = db.Column(db.DateTime, default=db.func.now())
     
     user = db.relationship('User', backref=db.backref('webauthn_credentials', lazy=True))
+
+class LoginSession(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    session_token = db.Column(db.String(64), unique=True, nullable=False)
+    ip_address = db.Column(db.String(45))
+    user_agent = db.Column(db.String(500))
+    device_info = db.Column(db.String(200))
+    location = db.Column(db.String(200))
+    created_at = db.Column(db.DateTime, default=db.func.now())
+    last_activity = db.Column(db.DateTime, default=db.func.now())
+    is_current = db.Column(db.Boolean, default=False)
+    
+    user = db.relationship('User', backref=db.backref('login_sessions', lazy=True))
+
+def get_device_info(user_agent_string):
+    try:
+        user_agent = parse(user_agent_string)
+        
+        if user_agent.is_mobile:
+            device_type = "Mobile"
+        elif user_agent.is_tablet:
+            device_type = "Tablet"
+        elif user_agent.is_pc:
+            device_type = "Desktop"
+        else:
+            device_type = "Unknown"
+        
+        browser = f"{user_agent.browser.family} {user_agent.browser.version_string}"
+        os = f"{user_agent.os.family} {user_agent.os.version_string}"
+        
+        return f"{device_type} - {browser} on {os}"
+    except:
+        return "Unknown Device"
+
+def create_login_session(user_id):
+    session_token = secrets.token_urlsafe(32)
+    ip_address = request.remote_addr
+    user_agent = request.headers.get('User-Agent', '')
+    device_info = get_device_info(user_agent)
+    
+    # Mark all other sessions as not current
+    LoginSession.query.filter_by(user_id=user_id, is_current=True).update({'is_current': False})
+    
+    new_session = LoginSession(
+        user_id=user_id,
+        session_token=session_token,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        device_info=device_info,
+        is_current=True
+    )
+    db.session.add(new_session)
+    db.session.commit()
+    
+    session['session_token'] = session_token
+    
+    return new_session
+
+def calculate_security_score(user):
+    score = 0
+    recommendations = []
+    
+    # Password authentication (base 20 points)
+    if user.password_hash and user.password_hash not in ["GOOGLE_OAUTH", "GITHUB_OAUTH", "MICROSOFT_OAUTH", "DISCORD_OAUTH", "APPLE_OAUTH", "FACEBOOK_OAUTH"]:
+        score += 20
+    
+    # MFA enabled (30 points)
+    if user.mfa_secret:
+        score += 30
+    else:
+        recommendations.append("Enable Two-Factor Authentication (MFA)")
+    
+    # Has at least one passkey (30 points)
+    passkey_count = WebAuthnCredential.query.filter_by(user_id=user.id).count()
+    if passkey_count > 0:
+        score += 30
+    else:
+        recommendations.append("Add a Passkey for passwordless login")
+    
+    # Has multiple passkeys (10 points)
+    if passkey_count > 1:
+        score += 10
+    elif passkey_count == 1:
+        recommendations.append("Add a backup Passkey")
+    
+    # Recent activity check (10 points)
+    recent_sessions = LoginSession.query.filter_by(user_id=user.id).filter(
+        LoginSession.last_activity > datetime.utcnow() - timedelta(days=30)
+    ).count()
+    if recent_sessions <= 3:
+        score += 10
+    else:
+        recommendations.append("Review and revoke old sessions")
+    
+    return min(score, 100), recommendations
 
 # Create database tables
 with app.app_context():
@@ -237,6 +338,7 @@ def login():
             user = User.query.filter_by(username=username).first()
             if user:
                 login_user(user)
+                create_login_session(user.id)
                 session["user"] = username  # Keep for backward compatibility
                 flash("Login successful!", "success")
                 return redirect(url_for("dashboard"))
@@ -334,6 +436,7 @@ def google_callback():
         db.session.commit()
 
     login_user(user)
+    create_login_session(user.id)
     session["user"] = email
     flash("Logged in with Google!", "success")
     return redirect(url_for("dashboard"))
@@ -362,6 +465,7 @@ def github_callback():
         db.session.commit()
 
     login_user(user)
+    create_login_session(user.id)
     flash(f"Logged in with GitHub as {name}", "success")
     return redirect(url_for("dashboard"))
 
@@ -384,6 +488,7 @@ def microsoft_callback():
         db.session.commit()
 
     login_user(user)
+    create_login_session(user.id)
     flash(f"Logged in with Microsoft as {name}", "success")
     return redirect(url_for("dashboard"))
 
@@ -426,6 +531,7 @@ def discord_callback():
             db.session.commit()
 
         login_user(user)
+        create_login_session(user.id)
         flash(f"Logged in with Discord as {name}", "success")
         return redirect(url_for("dashboard"))
 
@@ -454,6 +560,7 @@ def apple_callback():
         db.session.commit()
 
     login_user(user)
+    create_login_session(user.id)
     flash(f"Logged in with Apple as {name}", "success")
     return redirect(url_for("dashboard"))
 
@@ -476,6 +583,7 @@ def facebook_callback():
         db.session.commit()
 
     login_user(user)
+    create_login_session(user.id)
     flash(f"Logged in with Facebook as {name}", "success")
     return redirect(url_for("dashboard"))
 
@@ -649,11 +757,13 @@ def webauthn_login_complete():
         
         # Update sign count
         credential_record.sign_count = verification.new_sign_count
+        credential_record.last_used = datetime.utcnow() 
         db.session.commit()
         
         # Log the user in
         user = User.query.get(credential_record.user_id)
         login_user(user)
+        create_login_session(user.id)
         session["user"] = user.username
         
         return jsonify({"status": "ok"})
