@@ -53,47 +53,73 @@
       </a>
 
       <button class="btn btn-secondary w-100" onclick="startPasskeyLogin()">
-      <i class="bi bi-key"></i> Use Passkey
+        <i class="bi bi-key"></i> Use Passkey
       </button>
     </div>
   </div>
+
+<!-- Error Modal -->
+<div class="modal fade" id="errorModal" tabindex="-1" aria-labelledby="errorModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title" id="errorModalLabel">
+          <i class="bi bi-exclamation-triangle-fill"></i> Authentication Error
+        </h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="errorModalBody">
+        <!-- Error message will be inserted here -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
+function showError(message) {
+  document.getElementById('errorModalBody').textContent = message;
+  const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
+  errorModal.show();
+}
+
 async function startPasskeyLogin() {
-  const username = prompt("Enter your username to use a passkey:");
-  if (!username) return;
-
   try {
-    // Step 1: request login options from the server
-    const startRes = await fetch("/webauthn/login/begin", {
+    // Step 1: request login options from the server (no username needed)
+    const startRes = await fetch("/webauthn/login/begin-usernameless", {
       method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ username })  // Changed from email to username
+      headers: {"Content-Type": "application/json"}
     });
-    const options = await startRes.json();
-
-    if (options.error) {
-      alert(options.error);
+    
+    if (!startRes.ok) {
+      const error = await startRes.json();
+      showError(error.error || "Failed to start passkey login");
       return;
     }
+    
+    const options = await startRes.json();
 
-    // Step 2: decode challenge and allowCredentials IDs
+    // Step 2: decode challenge
     options.publicKey.challenge = Uint8Array.from(
       atob(options.publicKey.challenge.replace(/_/g, "/").replace(/-/g, "+")),
       c => c.charCodeAt(0)
     );
 
-    if (options.publicKey.allowCredentials) {
-      options.publicKey.allowCredentials = options.publicKey.allowCredentials.map(cred => ({
-        ...cred,
-        id: Uint8Array.from(
-          atob(cred.id.replace(/_/g, "/").replace(/-/g, "+")),
-          c => c.charCodeAt(0)
-        )
-      }));
+    // Step 3: get credential from browser (user selects their passkey)
+    let credential;
+    try {
+      credential = await navigator.credentials.get(options);
+    } catch (err) {
+      // Handle user cancellation or timeout
+      if (err.name === "NotAllowedError") {
+        showError("Passkey authentication was cancelled or timed out. Please try again.");
+      } else {
+        showError("Could not authenticate with passkey: " + err.message);
+      }
+      return;
     }
-
-    // Step 3: get credential from browser
-    const credential = await navigator.credentials.get(options);
 
     // Step 4: encode the credential for JSON serialization
     const credentialJSON = {
