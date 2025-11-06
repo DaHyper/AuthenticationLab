@@ -28,6 +28,9 @@ qrcode==8.2
 requests==2.32.5
 SQLAlchemy==2.0.44
 typing_extensions==4.15.0
+ua-parser==1.0.1
+ua-parser-builtins==0.18.0.post1
 urllib3==2.5.0
+user-agents==2.2.0
 webauthn==2.7.0
 Werkzeug==3.1.3
